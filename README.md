@@ -2,14 +2,16 @@
 
 Auto-apply for jobs on LinkedIn and Naukri.com — AI-powered, with human confirmation before every submission.
 
-## What It Does
+## Features
 
-1. **Searches** LinkedIn & Naukri.com for jobs matching your criteria
-2. **Scores** each job (0–100) against your resume using AI
-3. **Shows** you the top matches — you pick which to apply to
-4. **Tailors** your resume for each selected job
-5. **Auto-fills** every application field in a real browser
-6. **STOPS** before submitting — shows a summary and waits for your `GO`
+- 🔍 **Job Search** — Scrapes LinkedIn & Naukri.com for matching roles
+- 📊 **AI Scoring** — Scores each job (0–100) against your resume
+- ✍️ **Resume Tailoring** — Generates a custom .docx resume per job
+- 📝 **Auto-Fill** — Fills every application field in a real browser
+- 🔄 **Multi-Step Forms** — Handles Next/Continue multi-page applications
+- 🔐 **Login Persistence** — Saves cookies so you only log in once
+- 📋 **Application Tracker** — Logs all applications, skips duplicates
+- ⛔ **Never submits without your GO**
 
 ## Hard Rules
 
@@ -38,7 +40,7 @@ playwright install chromium
 1. Go to https://aistudio.google.com/apikey
 2. Sign in with Google
 3. Click "Create API Key"
-4. Copy it — you'll paste it when the tool asks
+4. Copy it — you'll paste it when the tool asks (or set `GEMINI_API_KEY` env var)
 
 ## Run
 
@@ -47,12 +49,14 @@ source venv/bin/activate
 python main.py
 ```
 
-The tool will ask for:
-- Your name, email, phone, LinkedIn
-- Job titles to search
+## What It Asks You
+
+- Your name, email, phone, LinkedIn URL
+- Job titles to search (comma-separated)
 - Location preference
+- Which boards to search (LinkedIn, Naukri, or both)
 - Path to your resume (.pdf or .docx)
-- Gemini API key (or set `GEMINI_API_KEY` env var)
+- Gemini API key
 
 ## During Use
 
@@ -61,12 +65,34 @@ The tool will ask for:
 | CAPTCHA appears | Solve it, type `done` |
 | Login required | Log in manually, type `done` |
 | Unknown field | Type the answer when asked |
-| Pre-submission review | Type `GO` to submit or `SKIP` to skip |
+| Pre-submission review | Type `GO` to submit, `SKIP` to skip, or `EDIT` to make manual changes |
 | Resume upload fails | Upload manually, type `done` |
+
+## Project Structure
+
+```
+NaukriPro/
+├── main.py              # Orchestrator — run this
+├── config.py            # Interactive user input
+├── resume_parser.py     # PDF/DOCX text extraction
+├── ai_engine.py         # Gemini AI (scoring, tailoring, Q&A)
+├── scraper.py           # LinkedIn & Naukri job scraping
+├── applicator.py        # Form filling & multi-step navigation
+├── auth.py              # Login & cookie persistence
+├── tracker.py           # Application history & dedup
+├── resume_generator.py  # Tailored .docx generation
+├── requirements.txt     # Dependencies
+├── .gitignore
+├── applied_jobs.json    # (generated) application log
+├── tailored_resumes/    # (generated) per-job resumes
+└── .cookies/            # (generated) saved login sessions
+```
 
 ## Tips
 
 - Run during the day so you're available for prompts
 - Keep your resume file updated
 - One session can handle multiple applications back-to-back
-- The browser is visible — you can watch everything happening
+- Type `all` when asked which jobs to apply to
+- Cookies persist between sessions — login once per platform
+- Check `applied_jobs.json` to see your application history
