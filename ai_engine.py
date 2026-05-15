@@ -53,9 +53,20 @@ JOB DESCRIPTION:
         return {"score": 50, "reason": "Could not parse score"}
 
     def tailor_resume(self, resume_text: str, job_title: str, job_description: str) -> str:
-        """Return tailored resume content for a specific job."""
-        prompt = f"""Tailor this resume for the job below. Keep it truthful but emphasize relevant skills.
-Return the improved resume text only, no commentary.
+        """Return tailored resume content optimized for 90-100 match score."""
+        prompt = f"""You are an expert resume writer. Rewrite this resume to be a 95-100% match for the job below.
+
+Rules:
+- Keep all information TRUTHFUL — do not invent experience or skills the candidate doesn't have
+- Reorder sections to highlight the most relevant experience first
+- Use keywords and phrases from the job description naturally
+- Quantify achievements where possible
+- Remove irrelevant details that don't serve this application
+- Match the tone and terminology of the job posting
+- Ensure ATS (Applicant Tracking System) compatibility
+- Keep it concise (1-2 pages worth of content)
+
+Return ONLY the improved resume text, no commentary.
 
 ORIGINAL RESUME:
 {resume_text[:4000]}

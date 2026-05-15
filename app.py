@@ -238,15 +238,28 @@ async def apply_to_jobs(jobs):
 
             emit("log", message=f"[{i}/{len(jobs)}] {job['title']} @ {job['company']}", level="info")
 
-            # Tailor resume
-            emit("log", message="Tailoring resume...", level="info")
+            # Tailor resume to 90+ score
+            emit("log", message="Tailoring resume for 90+ score...", level="info")
             tailored_path = ""
             try:
                 tailored_text = ai.tailor_resume(resume_text, job["title"], job["description"])
+                # Verify score
+                result = ai.score_job(tailored_text, job["title"], job["description"])
+                score = result.get("score", 0)
+                emit("log", message=f"Tailored resume score: {score}/100", level="info")
+                
+                # If below 90, refine once more
+                if score < 90:
+                    emit("log", message="Refining further...", level="info")
+                    tailored_text = ai.tailor_resume(tailored_text, job["title"], job["description"])
+                    result = ai.score_job(tailored_text, job["title"], job["description"])
+                    score = result.get("score", 0)
+                    emit("log", message=f"Final resume score: {score}/100", level="success")
+                
                 tailored_path = save_tailored_resume(tailored_text, job["company"], job["title"])
-                emit("log", message="✓ Resume tailored", level="success")
-            except Exception:
-                emit("log", message="Using original resume", level="warning")
+                emit("log", message=f"✓ Resume saved ({score}/100): {tailored_path.split('/')[-1]}", level="success")
+            except Exception as e:
+                emit("log", message=f"Using original resume ({e})", level="warning")
 
             # Open new tab for this job
             page = await browser.new_page()
