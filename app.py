@@ -253,11 +253,13 @@ async def apply_to_jobs(jobs):
                 # Auto-apply mode: submit directly. Manual mode: ask GO/SKIP
                 if state["config"].get("auto_apply"):
                     emit("log", message=f"Auto-submitting: {job['title']} @ {job['company']}", level="info")
-                    submit_keywords = ["submit", "submit application", "apply", "send"]
+                    submit_keywords = ["submit", "submit application", "apply", "send", "confirm", "save and apply"]
                     buttons = await page.query_selector_all("button[type='submit'], button, input[type='submit']")
                     submitted = False
                     for btn in buttons:
                         try:
+                            if not await btn.is_visible():
+                                continue
                             text = (await btn.inner_text()).strip().lower()
                             if any(kw in text for kw in submit_keywords):
                                 await btn.click()
@@ -266,6 +268,15 @@ async def apply_to_jobs(jobs):
                                 break
                         except Exception:
                             continue
+                    if not submitted:
+                        # Try Naukri-specific: chatbot apply or direct apply success
+                        page_text = ""
+                        try:
+                            page_text = (await page.inner_text("body")).lower()
+                        except Exception:
+                            pass
+                        if "applied successfully" in page_text or "application submitted" in page_text:
+                            submitted = True
                     if submitted:
                         log_application(job, "submitted")
                         applied += 1
@@ -319,7 +330,7 @@ async def apply_to_jobs(jobs):
 
 async def fill_application_web(page, job, config, ai, resume_text, tailored_path):
     """Fill application — web version that uses emit/ask_user instead of console."""
-    from applicator import detect_blockers, click_apply_button, click_next_button
+    from applicator import detect_blockers, click_next_button
 
     url = job.get("url", "")
     if not url:
@@ -332,23 +343,60 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
         emit("log", message=f"Failed to load: {e}", level="error")
         return {}
 
+    # Click apply button (Naukri-specific + generic)
+    apply_btn = await page.query_selector("#apply-button, button[class*='apply'], [class*='apply-button']")
+    if not apply_btn:
+        # Try generic
+        buttons = await page.query_selector_all("button, a[role='button']")
+        for btn in buttons:
+            try:
+                text = (await btn.inner_text()).strip().lower()
+                if text in ["apply", "apply now", "easy apply", "i'm interested"]:
+                    apply_btn = btn
+                    break
+            except Exception:
+                continue
+
+    if apply_btn:
+        await apply_btn.click()
+        await page.wait_for_timeout(4000)
+
+    # Check if redirected to login/registration
+    current_url = page.url.lower()
+    if any(kw in current_url for kw in ["login", "registration", "createaccount", "signin", "authwall"]):
+        emit("log", message="Login required — please log in on the browser", level="warning")
+        ask_user("Log into your account in the browser, then type 'done'")
+        await page.wait_for_timeout(3000)
+        # After login, go back to job and click apply again
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(3000)
+        apply_btn = await page.query_selector("#apply-button, button[class*='apply'], [class*='apply-button']")
+        if apply_btn:
+            await apply_btn.click()
+            await page.wait_for_timeout(4000)
+
+    # Check for CAPTCHA
     blocker = await detect_blockers(page)
     if blocker:
-        ask_user(f"{'CAPTCHA' if blocker == 'captcha' else 'Login'} detected — handle it in the browser, then type 'done'")
+        emit("log", message=f"{'CAPTCHA' if blocker == 'captcha' else 'Blocker'} detected", level="warning")
+        ask_user("Handle it in the browser, then type 'done'")
         await page.wait_for_timeout(2000)
 
-    await click_apply_button(page)
-
-    blocker = await detect_blockers(page)
-    if blocker:
-        ask_user(f"{'CAPTCHA' if blocker == 'captcha' else 'Login'} detected — handle it, then type 'done'")
-        await page.wait_for_timeout(2000)
+    # Check if Naukri shows "already applied"
+    page_text = ""
+    try:
+        page_text = (await page.inner_text("body")).lower()
+    except Exception:
+        pass
+    if "already applied" in page_text:
+        emit("log", message="Already applied to this job — skipping", level="info")
+        return {}
 
     # Fill fields across steps
     all_filled = {}
     for step in range(10):
         inputs = await page.query_selector_all(
-            "input[type='text'], input[type='email'], input[type='tel'], input[type='url'], "
+            "input[type='text'], input[type='email'], input[type='tel'], input[type='url'], input[type='number'], "
             "input:not([type='hidden']):not([type='file']):not([type='checkbox'])"
             ":not([type='radio']):not([type='submit']):not([type='button']):not([type='password'])"
         )
@@ -378,23 +426,28 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
 
                 h = hint.lower()
                 value = ""
-                if any(k in h for k in ["full name", "your name"]):
+                if any(k in h for k in ["full name", "your name", "what is your name"]):
                     value = config["name"]
                 elif any(k in h for k in ["first name", "fname"]):
-                    value = config["name"].split()[0]
+                    value = config["name"].split()[0] if config["name"] else ""
                 elif any(k in h for k in ["last name", "lname", "surname"]):
                     parts = config["name"].split()
                     value = parts[-1] if len(parts) > 1 else ""
                 elif "name" in h and "company" not in h:
                     value = config["name"]
-                elif any(k in h for k in ["email", "e-mail"]):
+                elif any(k in h for k in ["email", "e-mail", "email id"]):
                     value = config["email"]
-                elif any(k in h for k in ["phone", "mobile", "contact"]):
+                elif any(k in h for k in ["phone", "mobile", "contact", "mobile number"]):
                     value = config["phone"]
                 elif "linkedin" in h:
                     value = config["linkedin"]
-                elif any(k in h for k in ["city", "location"]):
+                elif any(k in h for k in ["city", "location", "current location"]):
                     value = config["location"]
+                elif any(k in h for k in ["notice period", "current ctc", "expected ctc", "experience", "salary"]):
+                    answer = ai.answer_question(resume_text, hint)
+                    value = answer if "ASK_USER" not in answer else ""
+                    if not value:
+                        value = ask_user(f"Please provide: {hint}")
                 else:
                     answer = ai.answer_question(resume_text, hint)
                     if "ASK_USER" in answer:
