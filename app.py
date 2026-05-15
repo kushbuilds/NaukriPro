@@ -69,16 +69,16 @@ def search_jobs():
 
         # Build config
         boards = request.form.getlist('boards')
-        gemini_key = request.form.get('gemini_key') or os.environ.get('GEMINI_API_KEY', '')
+        gemini_key = os.environ.get('GEMINI_API_KEY', '')
 
         if not gemini_key:
-            return jsonify({"error": "Gemini API key required"}), 400
+            return jsonify({"error": "Set GEMINI_API_KEY environment variable"}), 400
 
         config = {
-            "name": request.form['name'],
-            "email": request.form['email'],
-            "phone": request.form['phone'],
-            "linkedin": request.form.get('linkedin', ''),
+            "name": "",
+            "email": "",
+            "phone": "",
+            "linkedin": "",
             "job_titles": [t.strip() for t in request.form['job_titles'].split(',')],
             "location": request.form['location'],
             "boards": boards,
@@ -88,9 +88,23 @@ def search_jobs():
 
         state["config"] = config
         state["resume_text"] = parse_resume(resume_path)
-        state["ai"] = AIEngine(gemini_key)
 
-        # Run scraping in async
+        # Extract basic info from resume using AI
+        state["ai"] = AIEngine(gemini_key)
+        try:
+            info = state["ai"]._call(f"Extract from this resume and return ONLY JSON: {{\"name\":\"\",\"email\":\"\",\"phone\":\"\",\"linkedin\":\"\"}}\n\nRESUME:\n{state['resume_text'][:2000]}")
+            import re
+            match = re.search(r'\{.*\}', info, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group())
+                config["name"] = parsed.get("name", "")
+                config["email"] = parsed.get("email", "")
+                config["phone"] = parsed.get("phone", "")
+                config["linkedin"] = parsed.get("linkedin", "")
+        except Exception:
+            pass
+
+        # Run scraping
         jobs = asyncio.run(scrape_and_score(config, state["ai"], state["resume_text"]))
         state["jobs"] = jobs
 

@@ -3,71 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NaukriPro — Auto Job Applicator</title>
+  <title>NaukriPro</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="container">
     <h1>🤖 NaukriPro</h1>
-    <p class="subtitle">Auto-apply for jobs with AI — you stay in control.</p>
+    <p class="subtitle">Find jobs. Apply automatically. You just say GO.</p>
 
     <!-- Status Bar -->
     <div id="statusBar" class="status-bar status-idle">
       <span id="statusIcon">⏸</span>
-      <span id="statusText">Ready to start</span>
+      <span id="statusText">Ready</span>
       <button id="stopBtn" class="btn btn-danger btn-sm hidden" style="margin-left:auto;">⏹ Stop</button>
     </div>
 
-    <!-- Step 1: Config -->
+    <!-- Simple Search Form -->
     <div id="configSection" class="card">
-      <h2>📋 Your Details</h2>
-      <form id="configForm" class="form-grid">
-        <div class="form-group">
-          <label>Full Name</label>
-          <input type="text" name="name" required placeholder="Kush Mittal">
-        </div>
-        <div class="form-group">
-          <label>Email</label>
-          <input type="email" name="email" required placeholder="you@email.com">
-        </div>
-        <div class="form-group">
-          <label>Phone</label>
-          <input type="tel" name="phone" required placeholder="+91 9876543210">
-        </div>
-        <div class="form-group">
-          <label>LinkedIn URL</label>
-          <input type="url" name="linkedin" placeholder="https://linkedin.com/in/you">
-        </div>
-        <div class="form-group">
-          <label>Job Titles (comma-separated)</label>
-          <input type="text" name="job_titles" required placeholder="Data Analyst, Python Developer">
-        </div>
-        <div class="form-group">
-          <label>Location</label>
-          <input type="text" name="location" required placeholder="Bangalore or remote">
-        </div>
-        <div class="form-group">
-          <label>Resume (.pdf or .docx)</label>
-          <input type="file" name="resume" accept=".pdf,.docx,.doc" required>
-        </div>
-        <div class="form-group">
-          <label>Gemini API Key</label>
-          <input type="password" name="gemini_key" placeholder="Auto-detected from env" value="">
-        </div>
-        <div class="form-group full">
-          <label>Job Boards</label>
-          <div class="checkbox-group">
-            <label><input type="checkbox" name="boards" value="linkedin" checked> LinkedIn</label>
-            <label><input type="checkbox" name="boards" value="naukri" checked> Naukri.com</label>
+      <h2>🔍 What jobs are you looking for?</h2>
+      <form id="configForm">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label>Job Titles</label>
+            <input type="text" name="job_titles" required placeholder="e.g. Backend Developer, Python Developer">
+          </div>
+          <div class="form-group">
+            <label>Location</label>
+            <input type="text" name="location" required placeholder="e.g. Bangalore, Remote">
+          </div>
+          <div class="form-group">
+            <label>Resume</label>
+            <input type="file" name="resume" accept=".pdf,.docx,.doc" required>
+          </div>
+          <div class="form-group full">
+            <label>Search on</label>
+            <div class="checkbox-group">
+              <label><input type="checkbox" name="boards" value="linkedin" checked> LinkedIn</label>
+              <label><input type="checkbox" name="boards" value="naukri" checked> Naukri.com</label>
+            </div>
           </div>
         </div>
-        <div class="form-group full">
-          <button type="submit" class="btn">🔍 Search Jobs</button>
-        </div>
+        <button type="submit" class="btn" style="margin-top:1rem; width:100%;">🚀 Find Jobs</button>
       </form>
     </div>
 
-    <!-- Step 2: Jobs List -->
+    <!-- Jobs List -->
     <div id="jobsSection" class="card hidden">
       <h2>🏆 Top Matches</h2>
       <table class="job-table">
@@ -78,7 +58,6 @@
             <th>Title</th>
             <th>Company</th>
             <th>Location</th>
-            <th>Source</th>
           </tr>
         </thead>
         <tbody id="jobsBody"></tbody>
@@ -89,16 +68,14 @@
       </div>
     </div>
 
-    <!-- Step 3: Live Log -->
+    <!-- Live Log -->
     <div id="logSection" class="card hidden">
-      <h2>📝 Application Progress</h2>
+      <h2>📝 Progress</h2>
       <div id="logBox" class="log-box"></div>
-      <!-- User input for when tool needs answers -->
       <div id="userInputSection" class="hidden" style="margin-top:1rem; display:flex; gap:0.5rem;">
         <input type="text" id="userInput" placeholder="Type your answer..." style="flex:1;">
         <button id="userInputBtn" class="btn btn-sm">Send</button>
       </div>
-      <!-- GO/SKIP buttons -->
       <div id="confirmSection" class="hidden" style="margin-top:1rem; display:flex; gap:0.5rem;">
         <button id="goBtn" class="btn btn-success">✅ GO — Submit</button>
         <button id="skipBtn" class="btn btn-danger">⏭ SKIP</button>
@@ -109,8 +86,8 @@
   <script>
     const API = '';
     let eventSource = null;
+    let searchController = null;
 
-    // Elements
     const configForm = document.getElementById('configForm');
     const jobsSection = document.getElementById('jobsSection');
     const jobsBody = document.getElementById('jobsBody');
@@ -128,7 +105,7 @@
 
     function setStatus(type, text) {
       statusBar.className = 'status-bar status-' + type;
-      statusIcon.textContent = type === 'running' ? '' : type === 'done' ? '✅' : '⏸';
+      statusIcon.textContent = type === 'done' ? '✅' : '⏸';
       if (type === 'running') statusIcon.innerHTML = '<div class="spinner"></div>';
       statusText.textContent = text;
       stopBtn.classList.toggle('hidden', type !== 'running');
@@ -142,152 +119,91 @@
       logBox.scrollTop = logBox.scrollHeight;
     }
 
-    // Form submit — search jobs
-    let searchController = null;
-
+    // Search
     configForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const formData = new FormData(configForm);
-      setStatus('running', 'Searching for jobs...');
+      setStatus('running', 'Searching...');
       searchController = new AbortController();
 
       try {
         const resp = await fetch('/api/search', { method: 'POST', body: formData, signal: searchController.signal });
         const data = await resp.json();
+        if (data.error) { setStatus('idle', data.error); return; }
 
-        if (data.error) {
-          setStatus('idle', 'Error: ' + data.error);
-          return;
-        }
-
-        // Show jobs
         jobsBody.innerHTML = '';
         data.jobs.forEach((job, i) => {
-          const scoreClass = job.score >= 75 ? 'score-high' : job.score >= 50 ? 'score-mid' : 'score-low';
-          jobsBody.innerHTML += `
-            <tr>
-              <td><input type="checkbox" class="job-check" data-index="${i}"></td>
-              <td><span class="score-badge ${scoreClass}">${job.score}</span></td>
-              <td>${job.title}</td>
-              <td>${job.company}</td>
-              <td>${job.location}</td>
-              <td>${job.source}</td>
-            </tr>`;
+          const sc = job.score >= 75 ? 'score-high' : job.score >= 50 ? 'score-mid' : 'score-low';
+          jobsBody.innerHTML += `<tr>
+            <td><input type="checkbox" class="job-check" data-index="${i}"></td>
+            <td><span class="score-badge ${sc}">${job.score}</span></td>
+            <td>${job.title}</td>
+            <td>${job.company}</td>
+            <td>${job.location}</td>
+          </tr>`;
         });
-
         jobsSection.classList.remove('hidden');
-        setStatus('idle', `Found ${data.jobs.length} matching jobs`);
+        setStatus('idle', `${data.jobs.length} jobs found`);
         updateSelectedCount();
       } catch (err) {
-        if (err.name === 'AbortError') {
-          setStatus('idle', 'Search stopped');
-        } else {
-          setStatus('idle', 'Error: ' + err.message);
-        }
+        setStatus('idle', err.name === 'AbortError' ? 'Stopped' : err.message);
       }
     });
 
-    // Stop button
+    // Stop
     stopBtn.addEventListener('click', () => {
-      // Stop search
-      if (searchController) {
-        searchController.abort();
-        searchController = null;
-      }
-      // Stop apply stream
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-      // Tell server to stop
+      if (searchController) { searchController.abort(); searchController = null; }
+      if (eventSource) { eventSource.close(); eventSource = null; }
       fetch('/api/stop', { method: 'POST' });
-      setStatus('idle', 'Stopped by user');
+      setStatus('idle', 'Stopped');
       userInputSection.classList.add('hidden');
       confirmSection.classList.add('hidden');
     });
 
-    // Select all
+    // Select
     selectAll.addEventListener('change', () => {
       document.querySelectorAll('.job-check').forEach(cb => cb.checked = selectAll.checked);
       updateSelectedCount();
     });
-
-    // Track selections
-    document.addEventListener('change', (e) => {
-      if (e.target.classList.contains('job-check')) updateSelectedCount();
-    });
-
+    document.addEventListener('change', (e) => { if (e.target.classList.contains('job-check')) updateSelectedCount(); });
     function updateSelectedCount() {
-      const count = document.querySelectorAll('.job-check:checked').length;
-      selectedCount.textContent = count + ' selected';
-      applyBtn.disabled = count === 0;
+      const c = document.querySelectorAll('.job-check:checked').length;
+      selectedCount.textContent = c + ' selected';
+      applyBtn.disabled = c === 0;
     }
 
-    // Apply button
+    // Apply
     applyBtn.addEventListener('click', () => {
       const indices = [];
-      document.querySelectorAll('.job-check:checked').forEach(cb => indices.push(parseInt(cb.dataset.index)));
-
+      document.querySelectorAll('.job-check:checked').forEach(cb => indices.push(cb.dataset.index));
       logSection.classList.remove('hidden');
       logBox.innerHTML = '';
-      setStatus('running', 'Applying to jobs...');
+      setStatus('running', 'Applying...');
 
-      // Start SSE for live updates
       eventSource = new EventSource('/api/apply?indices=' + indices.join(','));
-
       eventSource.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-
-        if (data.type === 'log') {
-          addLog(data.message, data.level || 'info');
-        } else if (data.type === 'ask_user') {
-          addLog('❓ ' + data.question, 'warning');
-          userInputSection.classList.remove('hidden');
-          document.getElementById('userInput').placeholder = data.question;
-          document.getElementById('userInput').focus();
-        } else if (data.type === 'confirm') {
-          addLog('⏸ Review: ' + data.summary, 'warning');
-          confirmSection.classList.remove('hidden');
-        } else if (data.type === 'done') {
-          setStatus('done', data.message);
-          eventSource.close();
-        }
+        const d = JSON.parse(e.data);
+        if (d.type === 'log') addLog(d.message, d.level || 'info');
+        else if (d.type === 'ask_user') { addLog('❓ ' + d.question, 'warning'); userInputSection.classList.remove('hidden'); document.getElementById('userInput').focus(); }
+        else if (d.type === 'confirm') { addLog('⏸ ' + d.summary, 'warning'); confirmSection.classList.remove('hidden'); }
+        else if (d.type === 'done') { setStatus('done', d.message); eventSource.close(); }
       };
-
-      eventSource.onerror = () => {
-        setStatus('idle', 'Connection lost');
-        eventSource.close();
-      };
+      eventSource.onerror = () => { setStatus('idle', 'Connection lost'); eventSource.close(); };
     });
 
-    // User input response
-    document.getElementById('userInputBtn').addEventListener('click', sendUserInput);
-    document.getElementById('userInput').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') sendUserInput();
-    });
-
+    // User responses
     function sendUserInput() {
-      const input = document.getElementById('userInput');
-      const value = input.value.trim();
-      if (!value) return;
-      fetch('/api/respond', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({answer: value}) });
-      addLog('→ ' + value, 'success');
-      input.value = '';
+      const inp = document.getElementById('userInput');
+      if (!inp.value.trim()) return;
+      fetch('/api/respond', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({answer: inp.value.trim()}) });
+      addLog('→ ' + inp.value.trim(), 'success');
+      inp.value = '';
       userInputSection.classList.add('hidden');
     }
-
-    // GO / SKIP
-    document.getElementById('goBtn').addEventListener('click', () => {
-      fetch('/api/respond', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({answer: 'GO'}) });
-      addLog('→ GO', 'success');
-      confirmSection.classList.add('hidden');
-    });
-
-    document.getElementById('skipBtn').addEventListener('click', () => {
-      fetch('/api/respond', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({answer: 'SKIP'}) });
-      addLog('→ SKIP', 'warning');
-      confirmSection.classList.add('hidden');
-    });
+    document.getElementById('userInputBtn').addEventListener('click', sendUserInput);
+    document.getElementById('userInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendUserInput(); });
+    document.getElementById('goBtn').addEventListener('click', () => { fetch('/api/respond', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({answer:'GO'})}); addLog('→ GO','success'); confirmSection.classList.add('hidden'); });
+    document.getElementById('skipBtn').addEventListener('click', () => { fetch('/api/respond', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({answer:'SKIP'})}); addLog('→ SKIP','warning'); confirmSection.classList.add('hidden'); });
   </script>
 </body>
 </html>
