@@ -28,6 +28,7 @@ state = {
     "ai": None,
     "event_queue": queue.Queue(),
     "response_queue": queue.Queue(),
+    "stop_flag": False,
 }
 
 
@@ -148,6 +149,7 @@ def apply_stream():
     selected = [state["jobs"][i] for i in indices if i < len(state["jobs"])]
 
     def run_applications():
+        state["stop_flag"] = False
         asyncio.run(apply_to_jobs(selected))
 
     thread = threading.Thread(target=run_applications, daemon=True)
@@ -171,6 +173,15 @@ def respond():
     """Receive user's answer to a question or GO/SKIP."""
     data = request.get_json()
     state["response_queue"].put(data.get("answer", ""))
+    return jsonify({"ok": True})
+
+
+@app.route('/api/stop', methods=['POST'])
+def stop():
+    """Stop the current operation."""
+    state["stop_flag"] = True
+    # Unblock any waiting response
+    state["response_queue"].put("STOP")
     return jsonify({"ok": True})
 
 
@@ -200,6 +211,10 @@ async def apply_to_jobs(jobs):
             await ensure_linkedin_login(page, context)
 
         for i, job in enumerate(jobs, 1):
+            if state["stop_flag"]:
+                emit("log", message="⏹ Stopped by user", level="warning")
+                break
+
             emit("log", message=f"[{i}/{len(jobs)}] {job['title']} @ {job['company']}", level="info")
 
             # Tailor resume

@@ -15,6 +15,7 @@
     <div id="statusBar" class="status-bar status-idle">
       <span id="statusIcon">⏸</span>
       <span id="statusText">Ready to start</span>
+      <button id="stopBtn" class="btn btn-danger btn-sm hidden" style="margin-left:auto;">⏹ Stop</button>
     </div>
 
     <!-- Step 1: Config -->
@@ -123,12 +124,14 @@
     const selectedCount = document.getElementById('selectedCount');
     const userInputSection = document.getElementById('userInputSection');
     const confirmSection = document.getElementById('confirmSection');
+    const stopBtn = document.getElementById('stopBtn');
 
     function setStatus(type, text) {
       statusBar.className = 'status-bar status-' + type;
       statusIcon.textContent = type === 'running' ? '' : type === 'done' ? '✅' : '⏸';
       if (type === 'running') statusIcon.innerHTML = '<div class="spinner"></div>';
       statusText.textContent = text;
+      stopBtn.classList.toggle('hidden', type !== 'running');
     }
 
     function addLog(msg, type = 'info') {
@@ -140,13 +143,16 @@
     }
 
     // Form submit — search jobs
+    let searchController = null;
+
     configForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const formData = new FormData(configForm);
       setStatus('running', 'Searching for jobs...');
+      searchController = new AbortController();
 
       try {
-        const resp = await fetch('/api/search', { method: 'POST', body: formData });
+        const resp = await fetch('/api/search', { method: 'POST', body: formData, signal: searchController.signal });
         const data = await resp.json();
 
         if (data.error) {
@@ -173,8 +179,31 @@
         setStatus('idle', `Found ${data.jobs.length} matching jobs`);
         updateSelectedCount();
       } catch (err) {
-        setStatus('idle', 'Error: ' + err.message);
+        if (err.name === 'AbortError') {
+          setStatus('idle', 'Search stopped');
+        } else {
+          setStatus('idle', 'Error: ' + err.message);
+        }
       }
+    });
+
+    // Stop button
+    stopBtn.addEventListener('click', () => {
+      // Stop search
+      if (searchController) {
+        searchController.abort();
+        searchController = null;
+      }
+      // Stop apply stream
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      // Tell server to stop
+      fetch('/api/stop', { method: 'POST' });
+      setStatus('idle', 'Stopped by user');
+      userInputSection.classList.add('hidden');
+      confirmSection.classList.add('hidden');
     });
 
     // Select all
