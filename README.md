@@ -44,6 +44,14 @@ playwright install chromium
 
 ## Run
 
+### Web UI (recommended)
+```bash
+source venv/bin/activate
+python app.py
+```
+Then open **http://localhost:5000** in your browser.
+
+### CLI mode
 ```bash
 source venv/bin/activate
 python main.py
@@ -72,8 +80,9 @@ python main.py
 
 ```
 NaukriPro/
-├── main.py              # Orchestrator — run this
-├── config.py            # Interactive user input
+├── app.py               # Web UI server (Flask) — run this
+├── main.py              # CLI mode alternative
+├── config.py            # Interactive user input (CLI)
 ├── resume_parser.py     # PDF/DOCX text extraction
 ├── ai_engine.py         # Gemini AI (scoring, tailoring, Q&A)
 ├── scraper.py           # LinkedIn & Naukri job scraping
@@ -81,6 +90,8 @@ NaukriPro/
 ├── auth.py              # Login & cookie persistence
 ├── tracker.py           # Application history & dedup
 ├── resume_generator.py  # Tailored .docx generation
+├── templates/index.html # Web UI frontend
+├── static/style.css     # UI styling
 ├── requirements.txt     # Dependencies
 ├── .gitignore
 ├── applied_jobs.json    # (generated) application log

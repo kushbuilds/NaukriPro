@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NaukriPro — Auto Job Applicator</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 NaukriPro</h1>
+    <p class="subtitle">Auto-apply for jobs with AI — you stay in control.</p>
+
+    <!-- Status Bar -->
+    <div id="statusBar" class="status-bar status-idle">
+      <span id="statusIcon">⏸</span>
+      <span id="statusText">Ready to start</span>
+    </div>
+
+    <!-- Step 1: Config -->
+    <div id="configSection" class="card">
+      <h2>📋 Your Details</h2>
+      <form id="configForm" class="form-grid">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" name="name" required placeholder="Kush Mittal">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" name="email" required placeholder="you@email.com">
+        </div>
+        <div class="form-group">
+          <label>Phone</label>
+          <input type="tel" name="phone" required placeholder="+91 9876543210">
+        </div>
+        <div class="form-group">
+          <label>LinkedIn URL</label>
+          <input type="url" name="linkedin" placeholder="https://linkedin.com/in/you">
+        </div>
+        <div class="form-group">
+          <label>Job Titles (comma-separated)</label>
+          <input type="text" name="job_titles" required placeholder="Data Analyst, Python Developer">
+        </div>
+        <div class="form-group">
+          <label>Location</label>
+          <input type="text" name="location" required placeholder="Bangalore or remote">
+        </div>
+        <div class="form-group">
+          <label>Resume (.pdf or .docx)</label>
+          <input type="file" name="resume" accept=".pdf,.docx,.doc" required>
+        </div>
+        <div class="form-group">
+          <label>Gemini API Key</label>
+          <input type="password" name="gemini_key" placeholder="Auto-detected from env" value="">
+        </div>
+        <div class="form-group full">
+          <label>Job Boards</label>
+          <div class="checkbox-group">
+            <label><input type="checkbox" name="boards" value="linkedin" checked> LinkedIn</label>
+            <label><input type="checkbox" name="boards" value="naukri" checked> Naukri.com</label>
+          </div>
+        </div>
+        <div class="form-group full">
+          <button type="submit" class="btn">🔍 Search Jobs</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Step 2: Jobs List -->
+    <div id="jobsSection" class="card hidden">
+      <h2>🏆 Top Matches</h2>
+      <table class="job-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="selectAll"></th>
+            <th>Score</th>
+            <th>Title</th>
+            <th>Company</th>
+            <th>Location</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="jobsBody"></tbody>
+      </table>
+      <div style="margin-top:1rem; display:flex; gap:1rem;">
+        <button id="applyBtn" class="btn" disabled>🚀 Apply to Selected</button>
+        <span id="selectedCount" style="color:var(--muted); align-self:center;">0 selected</span>
+      </div>
+    </div>
+
+    <!-- Step 3: Live Log -->
+    <div id="logSection" class="card hidden">
+      <h2>📝 Application Progress</h2>
+      <div id="logBox" class="log-box"></div>
+      <!-- User input for when tool needs answers -->
+      <div id="userInputSection" class="hidden" style="margin-top:1rem; display:flex; gap:0.5rem;">
+        <input type="text" id="userInput" placeholder="Type your answer..." style="flex:1;">
+        <button id="userInputBtn" class="btn btn-sm">Send</button>
+      </div>
+      <!-- GO/SKIP buttons -->
+      <div id="confirmSection" class="hidden" style="margin-top:1rem; display:flex; gap:0.5rem;">
+        <button id="goBtn" class="btn btn-success">✅ GO — Submit</button>
+        <button id="skipBtn" class="btn btn-danger">⏭ SKIP</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+    let eventSource = null;
+
+    // Elements
+    const configForm = document.getElementById('configForm');
+    const jobsSection = document.getElementById('jobsSection');
+    const jobsBody = document.getElementById('jobsBody');
+    const logSection = document.getElementById('logSection');
+    const logBox = document.getElementById('logBox');
+    const statusBar = document.getElementById('statusBar');
+    const statusIcon = document.getElementById('statusIcon');
+    const statusText = document.getElementById('statusText');
+    const applyBtn = document.getElementById('applyBtn');
+    const selectAll = document.getElementById('selectAll');
+    const selectedCount = document.getElementById('selectedCount');
+    const userInputSection = document.getElementById('userInputSection');
+    const confirmSection = document.getElementById('confirmSection');
+
+    function setStatus(type, text) {
+      statusBar.className = 'status-bar status-' + type;
+      statusIcon.textContent = type === 'running' ? '' : type === 'done' ? '✅' : '⏸';
+      if (type === 'running') statusIcon.innerHTML = '<div class="spinner"></div>';
+      statusText.textContent = text;
+    }
+
+    function addLog(msg, type = 'info') {
+      const p = document.createElement('p');
+      p.className = 'log-' + type;
+      p.textContent = msg;
+      logBox.appendChild(p);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    // Form submit — search jobs
+    configForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(configForm);
+      setStatus('running', 'Searching for jobs...');
+
+      try {
+        const resp = await fetch('/api/search', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (data.error) {
+          setStatus('idle', 'Error: ' + data.error);
+          return;
+        }
+
+        // Show jobs
+        jobsBody.innerHTML = '';
+        data.jobs.forEach((job, i) => {
+          const scoreClass = job.score >= 75 ? 'score-high' : job.score >= 50 ? 'score-mid' : 'score-low';
+          jobsBody.innerHTML += `
+            <tr>
+              <td><input type="checkbox" class="job-check" data-index="${i}"></td>
+              <td><span class="score-badge ${scoreClass}">${job.score}</span></td>
+              <td>${job.title}</td>
+              <td>${job.company}</td>
+              <td>${job.location}</td>
+              <td>${job.source}</td>
+            </tr>`;
+        });
+
+        jobsSection.classList.remove('hidden');
+        setStatus('idle', `Found ${data.jobs.length} matching jobs`);
+        updateSelectedCount();
+      } catch (err) {
+        setStatus('idle', 'Error: ' + err.message);
+      }
+    });
+
+    // Select all
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.job-check').forEach(cb => cb.checked = selectAll.checked);
+      updateSelectedCount();
+    });
+
+    // Track selections
+    document.addEventListener('change', (e) => {
+      if (e.target.classList.contains('job-check')) updateSelectedCount();
+    });
+
+    function updateSelectedCount() {
+      const count = document.querySelectorAll('.job-check:checked').length;
+      selectedCount.textContent = count + ' selected';
+      applyBtn.disabled = count === 0;
+    }
+
+    // Apply button
+    applyBtn.addEventListener('click', () => {
+      const indices = [];
+      document.querySelectorAll('.job-check:checked').forEach(cb => indices.push(parseInt(cb.dataset.index)));
+
+      logSection.classList.remove('hidden');
+      logBox.innerHTML = '';
+      setStatus('running', 'Applying to jobs...');
+
+      // Start SSE for live updates
+      eventSource = new EventSource('/api/apply?indices=' + indices.join(','));
+
+      eventSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+
+        if (data.type === 'log') {
+          addLog(data.message, data.level || 'info');
+        } else if (data.type === 'ask_user') {
+          addLog('❓ ' + data.question, 'warning');
+          userInputSection.classList.remove('hidden');
+          document.getElementById('userInput').placeholder = data.question;
+          document.getElementById('userInput').focus();
+        } else if (data.type === 'confirm') {
+          addLog('⏸ Review: ' + data.summary, 'warning');
+          confirmSection.classList.remove('hidden');
+        } else if (data.type === 'done') {
+          setStatus('done', data.message);
+          eventSource.close();
+        }
+      };
+
+      eventSource.onerror = () => {
+        setStatus('idle', 'Connection lost');
+        eventSource.close();
+      };
+    });
+
+    // User input response
+    document.getElementById('userInputBtn').addEventListener('click', sendUserInput);
+    document.getElementById('userInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendUserInput();
+    });
+
+    function sendUserInput() {
+      const input = document.getElementById('userInput');
+      const value = input.value.trim();
+      if (!value) return;
+      fetch('/api/respond', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({answer: value}) });
+      addLog('→ ' + value, 'success');
+      input.value = '';
+      userInputSection.classList.add('hidden');
+    }
+
+    // GO / SKIP
+    document.getElementById('goBtn').addEventListener('click', () => {
+      fetch('/api/respond', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({answer: 'GO'}) });
+      addLog('→ GO', 'success');
+      confirmSection.classList.add('hidden');
+    });
+
+    document.getElementById('skipBtn').addEventListener('click', () => {
+      fetch('/api/respond', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({answer: 'SKIP'}) });
+      addLog('→ SKIP', 'warning');
+      confirmSection.classList.add('hidden');
+    });
+  </script>
+</body>
+</html>
