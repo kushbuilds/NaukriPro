@@ -104,8 +104,11 @@ async def scrape_and_score(config, ai, resume_text):
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(headless=False)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = await context.new_page()
 
         all_jobs = []
         if "linkedin" in config["boards"]:
@@ -118,9 +121,9 @@ async def scrape_and_score(config, ai, resume_text):
         # Filter already applied
         all_jobs = [j for j in all_jobs if not is_already_applied(j.get("url", ""))]
 
-        # Score top 20
+        # Score top 10 (faster)
         scored = []
-        for job in all_jobs[:20]:
+        for job in all_jobs[:10]:
             desc = await get_job_description(page, job["url"])
             job["description"] = desc
             try:
@@ -389,5 +392,5 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
 
 
 if __name__ == '__main__':
-    print("\n🤖 NaukriPro running at: http://localhost:5000\n")
-    app.run(debug=False, port=5000)
+    print("\n🤖 NaukriPro running at: http://localhost:8080\n")
+    app.run(debug=False, port=8080, host="127.0.0.1")
