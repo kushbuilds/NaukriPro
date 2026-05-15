@@ -391,8 +391,10 @@ async def apply_to_jobs(jobs):
 
 
 async def fill_application_web(page, job, config, ai, resume_text, tailored_path):
-    """Fill application — web version that uses emit/ask_user instead of console."""
+    """Fill application — web version with human-like behavior."""
     from applicator import detect_blockers, click_next_button
+    from stealth import human_fill, human_delay, random_scroll, move_mouse_randomly
+    from cover_letter import generate_cover_letter
 
     url = job.get("url", "")
     if not url:
@@ -400,7 +402,9 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
 
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(3000)
+        await human_delay()
+        await random_scroll(page)
+        await page.wait_for_timeout(2000)
     except Exception as e:
         emit("log", message=f"Failed to load: {e}", level="error")
         return {}
@@ -408,7 +412,6 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
     # Click apply button (Naukri-specific + generic)
     apply_btn = await page.query_selector("#apply-button, button[class*='apply'], [class*='apply-button']")
     if not apply_btn:
-        # Try generic
         buttons = await page.query_selector_all("button, a[role='button']")
         for btn in buttons:
             try:
@@ -420,6 +423,8 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
                 continue
 
     if apply_btn:
+        await move_mouse_randomly(page)
+        await human_delay()
         await apply_btn.click()
         await page.wait_for_timeout(4000)
 
@@ -429,7 +434,6 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
         emit("log", message="Login required — please log in on the browser", level="warning")
         ask_user("Log into your account in the browser, then type 'done'")
         await page.wait_for_timeout(3000)
-        # After login, go back to job and click apply again
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(3000)
         apply_btn = await page.query_selector("#apply-button, button[class*='apply'], [class*='apply-button']")
@@ -444,7 +448,7 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
         ask_user("Handle it in the browser, then type 'done'")
         await page.wait_for_timeout(2000)
 
-    # Check if Naukri shows "already applied"
+    # Check if already applied
     page_text = ""
     try:
         page_text = (await page.inner_text("body")).lower()
@@ -454,9 +458,21 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
         emit("log", message="Already applied to this job — skipping", level="info")
         return {}
 
-    # Fill fields across steps
+    # Generate cover letter for this job
+    cover_letter = ""
+    try:
+        cover_letter = generate_cover_letter(ai, resume_text, job["title"], job["company"], job.get("description", ""))
+    except Exception:
+        pass
+
+    # Fill fields across steps (with retry)
     all_filled = {}
+    max_retries = 2
+
     for step in range(10):
+        await human_delay()
+
+        # --- Text inputs ---
         inputs = await page.query_selector_all(
             "input[type='text'], input[type='email'], input[type='tel'], input[type='url'], input[type='number'], "
             "input:not([type='hidden']):not([type='file']):not([type='checkbox'])"
@@ -518,12 +534,94 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
                         value = answer
 
                 if value:
-                    await inp.fill(value)
+                    await human_fill(inp, value)
                     all_filled[hint] = value
             except Exception:
                 continue
 
-        # Textareas
+        # --- Dropdowns/Select fields ---
+        selects = await page.query_selector_all("select")
+        for sel in selects:
+            try:
+                if not await sel.is_visible():
+                    continue
+                sel_id = await sel.get_attribute("id") or ""
+                name = await sel.get_attribute("name") or ""
+                label = ""
+                if sel_id:
+                    lbl = await page.query_selector(f"label[for='{sel_id}']")
+                    if lbl:
+                        label = (await lbl.inner_text()).strip()
+                hint = label or name
+                if not hint:
+                    continue
+
+                # Get options
+                options = await sel.query_selector_all("option")
+                option_texts = []
+                for opt in options:
+                    text = (await opt.inner_text()).strip()
+                    val = await opt.get_attribute("value") or ""
+                    if text and val:
+                        option_texts.append(text)
+
+                if not option_texts:
+                    continue
+
+                # Ask AI which option to pick
+                answer = ai.answer_question(resume_text, f"For the field '{hint}', which option best fits? Options: {', '.join(option_texts[:20])}")
+                if "ASK_USER" in answer:
+                    answer = ask_user(f"Select for '{hint}': {', '.join(option_texts[:10])}")
+
+                # Find best matching option
+                for opt in options:
+                    text = (await opt.inner_text()).strip()
+                    if text.lower() in answer.lower() or answer.lower() in text.lower():
+                        val = await opt.get_attribute("value")
+                        if val:
+                            await sel.select_option(value=val)
+                            all_filled[hint] = text
+                            break
+            except Exception:
+                continue
+
+        # --- Radio buttons ---
+        radio_groups = {}
+        radios = await page.query_selector_all("input[type='radio']")
+        for radio in radios:
+            try:
+                name = await radio.get_attribute("name") or ""
+                if name and name not in radio_groups:
+                    radio_groups[name] = []
+                if name:
+                    label_text = ""
+                    radio_id = await radio.get_attribute("id") or ""
+                    if radio_id:
+                        lbl = await page.query_selector(f"label[for='{radio_id}']")
+                        if lbl:
+                            label_text = (await lbl.inner_text()).strip()
+                    value = await radio.get_attribute("value") or ""
+                    radio_groups[name].append({"element": radio, "label": label_text or value, "value": value})
+            except Exception:
+                continue
+
+        for group_name, options in radio_groups.items():
+            try:
+                option_labels = [o["label"] for o in options if o["label"]]
+                if not option_labels:
+                    continue
+                answer = ai.answer_question(resume_text, f"For '{group_name}', which option? Choices: {', '.join(option_labels)}")
+                if "ASK_USER" in answer:
+                    answer = ask_user(f"Select for '{group_name}': {', '.join(option_labels)}")
+                for opt in options:
+                    if opt["label"].lower() in answer.lower() or answer.lower() in opt["label"].lower():
+                        await opt["element"].click()
+                        all_filled[group_name] = opt["label"]
+                        break
+            except Exception:
+                continue
+
+        # --- Textareas (cover letter, additional info) ---
         for ta in await page.query_selector_all("textarea"):
             try:
                 if not await ta.is_visible():
@@ -538,15 +636,23 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
                     if lbl:
                         label = (await lbl.inner_text()).strip()
                 hint = label or placeholder or "Additional info"
-                answer = ai.answer_question(resume_text, hint)
-                if "ASK_USER" in answer:
-                    answer = ask_user(f"Please provide: {hint}")
-                await ta.fill(answer)
-                all_filled[hint] = answer[:60] + "..."
+
+                # Use cover letter for cover letter fields
+                h = hint.lower()
+                if any(k in h for k in ["cover letter", "why do you want", "why should we hire", "tell us about"]):
+                    text = cover_letter if cover_letter else ai.answer_question(resume_text, hint)
+                else:
+                    text = ai.answer_question(resume_text, hint)
+
+                if "ASK_USER" in text:
+                    text = ask_user(f"Please provide: {hint}")
+
+                await human_fill(ta, text)
+                all_filled[hint] = text[:60] + "..."
             except Exception:
                 continue
 
-        # File upload
+        # --- File upload ---
         for fi in await page.query_selector_all("input[type='file']"):
             try:
                 upload = tailored_path if tailored_path else config["resume_path"]
@@ -556,6 +662,7 @@ async def fill_application_web(page, job, config, ai, resume_text, tailored_path
                 ask_user("Could not upload resume — please upload manually, then type 'done'")
 
         # Next step?
+        await human_delay()
         has_next = await click_next_button(page)
         if not has_next:
             break
