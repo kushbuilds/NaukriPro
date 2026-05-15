@@ -162,7 +162,7 @@ def search_after_signin():
 
 
 async def scrape_and_score(config, ai, resume_text):
-    """Scrape jobs and score them."""
+    """Scrape jobs and score them — fast mode using title-based scoring."""
     from playwright.async_api import async_playwright
     import os
 
@@ -183,26 +183,49 @@ async def scrape_and_score(config, ai, resume_text):
             jobs = await scrape_naukri(page, config["job_titles"], config["location"])
             all_jobs.extend(jobs)
 
+        await browser.close()
+
         # Filter already applied
         all_jobs = [j for j in all_jobs if not is_already_applied(j.get("url", ""))]
 
-        # Score top 10 and track relevant count
-        scored = []
-        for job in all_jobs[:10]:
-            desc = await get_job_description(page, job["url"])
-            job["description"] = desc
-            try:
-                result = ai.score_job(resume_text, job["title"], desc)
-                job["score"] = result.get("score", 50)
-                job["reason"] = result.get("reason", "")
-            except Exception:
-                job["score"] = 50
-                job["reason"] = ""
-            scored.append(job)
+        if not all_jobs:
+            return []
 
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        await browser.close()
-        return scored[:10]
+        # Fast scoring: score all jobs in ONE batch API call using title + company only
+        job_list_text = "\n".join(
+            f"{i+1}. {j['title']} at {j['company']} ({j['location']})"
+            for i, j in enumerate(all_jobs[:20])
+        )
+
+        prompt = f"""Score these jobs (0-100) based on how well this candidate matches.
+Return ONLY a JSON array: [{{"index":1,"score":85,"reason":"..."}}, ...]
+
+CANDIDATE RESUME (summary):
+{resume_text[:2000]}
+
+JOBS:
+{job_list_text}"""
+
+        try:
+            import json, re
+            resp = ai._call(prompt)
+            match = re.search(r'\[.*\]', resp, re.DOTALL)
+            if match:
+                scores = json.loads(match.group())
+                for item in scores:
+                    idx = item.get("index", 0) - 1
+                    if 0 <= idx < len(all_jobs):
+                        all_jobs[idx]["score"] = item.get("score", 50)
+                        all_jobs[idx]["reason"] = item.get("reason", "")
+        except Exception:
+            # Fallback: give all jobs score 50
+            for j in all_jobs:
+                j["score"] = 50
+                j["reason"] = ""
+
+        # Sort and return top 10
+        all_jobs.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return all_jobs[:10]
 
 
 @app.route('/api/apply')
@@ -283,16 +306,22 @@ async def apply_to_jobs(jobs):
             emit("log", message=f"[{i}/{len(jobs)}] {job['title']} @ {job['company']}", level="info")
 
             # Tailor resume to 90+ score
-            emit("log", message="Tailoring resume for 90+ score...", level="info")
+            emit("log", message="Fetching job details & tailoring resume...", level="info")
             tailored_path = ""
             try:
+                # Fetch full description now (not during search for speed)
+                if not job.get("description"):
+                    from playwright.async_api import async_playwright
+                    desc_page = await browser.new_page()
+                    from scraper import get_job_description
+                    job["description"] = await get_job_description(desc_page, job["url"])
+                    await desc_page.close()
+
                 tailored_text = ai.tailor_resume(resume_text, job["title"], job["description"])
-                # Verify score
                 result = ai.score_job(tailored_text, job["title"], job["description"])
                 score = result.get("score", 0)
                 emit("log", message=f"Tailored resume score: {score}/100", level="info")
                 
-                # If below 90, refine once more
                 if score < 90:
                     emit("log", message="Refining further...", level="info")
                     tailored_text = ai.tailor_resume(tailored_text, job["title"], job["description"])
@@ -301,7 +330,7 @@ async def apply_to_jobs(jobs):
                     emit("log", message=f"Final resume score: {score}/100", level="success")
                 
                 tailored_path = save_tailored_resume(tailored_text, job["company"], job["title"])
-                emit("log", message=f"✓ Resume saved ({score}/100): {tailored_path.split('/')[-1]}", level="success")
+                emit("log", message=f"✓ Resume ready ({score}/100)", level="success")
             except Exception as e:
                 emit("log", message=f"Using original resume ({e})", level="warning")
 
