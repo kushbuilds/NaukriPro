@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f1117;
+      color: #e4e4e7;
+      padding: 16px;
+    }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    .subtitle { color: #9ca3af; font-size: 12px; margin-bottom: 16px; }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .status-off { background: #1a1d2e; color: #ef4444; }
+    .status-on { background: #22c55e22; color: #22c55e; }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .dot-red { background: #ef4444; }
+    .dot-green { background: #22c55e; }
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-start { background: #6c63ff; color: white; }
+    .btn-open { background: #1a1d2e; color: #e4e4e7; border: 1px solid #2d3148; }
+    .btn-stop { background: #ef4444; color: white; }
+    .info {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>🤖 NaukriPro</h1>
+  <p class="subtitle">Auto Job Applicator</p>
+
+  <div id="statusOff" class="status status-off">
+    <div class="dot dot-red"></div>
+    Server not running
+  </div>
+  <div id="statusOn" class="status status-on hidden">
+    <div class="dot dot-green"></div>
+    Server running
+  </div>
+
+  <button id="startBtn" class="btn btn-start">▶ Start Server</button>
+  <button id="openBtn" class="btn btn-open">🌐 Open NaukriPro</button>
+  <button id="stopBtn" class="btn btn-stop hidden">⏹ Stop Server</button>
+
+  <p class="info">
+    Make sure the Python server is running.<br>
+    First time? Run in terminal:<br>
+    <code style="color:#6c63ff;">cd ~/Documents/Projects/NaukriPro && source venv/bin/activate && python app.py</code>
+  </p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

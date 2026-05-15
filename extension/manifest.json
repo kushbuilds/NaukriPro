@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "NaukriPro",
+  "version": "1.0",
+  "description": "Auto-apply for jobs on LinkedIn & Naukri.com with AI",
+  "permissions": ["activeTab"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icon.png"
+    }
+  },
+  "icons": {
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}
