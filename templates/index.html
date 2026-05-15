@@ -48,8 +48,16 @@
             </div>
           </div>
         </div>
-        <button type="submit" class="btn" style="margin-top:1rem; width:100%;">🚀 Find Jobs</button>
+        <button type="submit" class="btn" style="margin-top:1rem; width:100%;">🚀 Sign In & Find Jobs</button>
       </form>
+    </div>
+
+    <!-- Sign-in status -->
+    <div id="signinSection" class="card hidden">
+      <h2>🔐 Sign in to your accounts</h2>
+      <p style="color:var(--muted); margin-bottom:1rem;">A browser window will open. Sign in to your accounts, then click "Done" below.</p>
+      <div id="signinStatus" style="margin-bottom:1rem;"></div>
+      <button id="signinDoneBtn" class="btn btn-success">✅ I've signed in — Find Jobs</button>
     </div>
 
     <!-- Jobs List -->
@@ -128,11 +136,38 @@
     configForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const formData = new FormData(configForm);
-      setStatus('running', 'Searching...');
-      searchController = new AbortController();
+      setStatus('running', 'Opening browser for sign-in...');
 
+      // Step 1: Upload resume & trigger sign-in
       try {
-        const resp = await fetch('/api/search', { method: 'POST', body: formData, signal: searchController.signal });
+        const resp = await fetch('/api/signin', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.error) { setStatus('idle', data.error); return; }
+
+        // Show sign-in section
+        configSection.classList.add('hidden');
+        const signinSection = document.getElementById('signinSection');
+        const signinStatus = document.getElementById('signinStatus');
+        signinSection.classList.remove('hidden');
+
+        const boards = formData.getAll('boards');
+        let statusHtml = '';
+        if (boards.includes('naukri')) statusHtml += '<p>→ Sign in to <strong>Naukri.com</strong> in the browser window</p>';
+        if (boards.includes('linkedin')) statusHtml += '<p>→ Sign in to <strong>LinkedIn</strong> in the browser window</p>';
+        signinStatus.innerHTML = statusHtml;
+
+        setStatus('idle', 'Sign in to your accounts in the browser window');
+      } catch (err) {
+        setStatus('idle', err.message);
+      }
+    });
+
+    // After sign-in done, search for jobs
+    document.getElementById('signinDoneBtn').addEventListener('click', async () => {
+      setStatus('running', 'Searching for jobs...');
+      searchController = new AbortController();
+      try {
+        const resp = await fetch('/api/search_after_signin', { signal: searchController.signal });
         const data = await resp.json();
         if (data.error) { setStatus('idle', data.error); return; }
 
@@ -148,11 +183,11 @@
             <td>${job.location}</td>
           </tr>`;
         });
+        document.getElementById('signinSection').classList.add('hidden');
         jobsSection.classList.remove('hidden');
         setStatus('idle', `${data.jobs.length} jobs found — ${relevant.length} relevant (score ≥ 60)`);
         updateSelectedCount();
 
-        // Auto-apply: automatically start applying to relevant jobs
         if (data.auto_apply && relevant.length > 0) {
           applyBtn.click();
         }

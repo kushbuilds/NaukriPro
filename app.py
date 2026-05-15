@@ -54,11 +54,10 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/api/search', methods=['POST'])
-def search_jobs():
-    """Handle job search form submission."""
+@app.route('/api/signin', methods=['POST'])
+def signin():
+    """Open browser for user to sign in, save config."""
     try:
-        # Save resume file
         resume_file = request.files.get('resume')
         if not resume_file:
             return jsonify({"error": "Resume file required"}), 400
@@ -67,10 +66,8 @@ def search_jobs():
         resume_path = str(app.config['UPLOAD_FOLDER'] / filename)
         resume_file.save(resume_path)
 
-        # Build config
         boards = request.form.getlist('boards')
         gemini_key = os.environ.get('GEMINI_API_KEY', '')
-
         if not gemini_key:
             return jsonify({"error": "Set GEMINI_API_KEY environment variable"}), 400
 
@@ -91,12 +88,12 @@ def search_jobs():
 
         state["config"] = config
         state["resume_text"] = parse_resume(resume_path)
-
-        # Extract basic info from resume using AI
         state["ai"] = AIEngine(gemini_key)
+
+        # Extract info from resume
         try:
-            info = state["ai"]._call(f"Extract from this resume and return ONLY JSON: {{\"name\":\"\",\"email\":\"\",\"phone\":\"\",\"linkedin\":\"\"}}\n\nRESUME:\n{state['resume_text'][:2000]}")
             import re
+            info = state["ai"]._call(f"Extract from this resume and return ONLY JSON: {{\"name\":\"\",\"email\":\"\",\"phone\":\"\",\"linkedin\":\"\"}}\n\nRESUME:\n{state['resume_text'][:2000]}")
             match = re.search(r'\{.*\}', info, re.DOTALL)
             if match:
                 parsed = json.loads(match.group())
@@ -107,12 +104,59 @@ def search_jobs():
         except Exception:
             pass
 
-        # Run scraping
-        jobs = asyncio.run(scrape_and_score(config, state["ai"], state["resume_text"]))
+        # Open browser with login pages
+        def open_signin():
+            asyncio.run(open_signin_pages(boards))
+        thread = threading.Thread(target=open_signin, daemon=True)
+        thread.start()
+
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+async def open_signin_pages(boards):
+    """Open browser with login pages for user to sign in."""
+    from playwright.async_api import async_playwright
+    import os
+
+    browser = await (await async_playwright().start()).chromium.launch_persistent_context(
+        user_data_dir=os.path.expanduser("~/.naukripro_chrome_profile"),
+        headless=False,
+        channel="chrome",
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+
+    if "naukri" in boards:
+        page = browser.pages[0] if browser.pages else await browser.new_page()
+        await page.goto("https://www.naukri.com/mnjuser/profile", wait_until="domcontentloaded", timeout=15000)
+
+    if "linkedin" in boards:
+        page = await browser.new_page()
+        await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=15000)
+
+    # Keep browser open — will be closed when search starts
+    state["signin_browser"] = browser
+
+
+@app.route('/api/search_after_signin')
+def search_after_signin():
+    """Search for jobs using the signed-in browser session."""
+    try:
+        config = state["config"]
+        ai = state["ai"]
+        resume_text = state["resume_text"]
+
+        # Close the sign-in browser
+        if "signin_browser" in state and state["signin_browser"]:
+            asyncio.run(state["signin_browser"].close())
+            state["signin_browser"] = None
+
+        # Now scrape with the saved session
+        jobs = asyncio.run(scrape_and_score(config, ai, resume_text))
         state["jobs"] = jobs
 
-        return jsonify({"jobs": jobs, "auto_apply": auto_apply})
-
+        return jsonify({"jobs": jobs, "auto_apply": config.get("auto_apply", False)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
