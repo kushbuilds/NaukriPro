@@ -50,47 +50,31 @@ async def scrape_naukri(page: Page, job_titles: list, location: str, limit: int 
     """Scrape Naukri.com job listings."""
     jobs = []
     for title in job_titles:
-        query = title.replace(" ", "-")
+        query = title.replace(" ", "-").lower()
         loc = location.replace(" ", "-").lower()
         url = f"https://www.naukri.com/{query}-jobs-in-{loc}"
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(5000)
         except Exception as e:
             console.print(f"[yellow]  Naukri timeout for '{title}': {e}[/yellow]")
             continue
 
-        # Try multiple selectors (Naukri changes DOM frequently)
-        selectors = [
-            ".srp-jobtuple-wrapper",
-            ".jobTuple",
-            "article.jobTuple",
-            "[class*='jobTuple']",
-            ".cust-job-tuple",
-            "a[class*='title']",
-        ]
-        cards = []
-        for sel in selectors:
-            cards = await page.query_selector_all(sel)
-            if cards:
-                break
+        cards = await page.query_selector_all(".srp-jobtuple-wrapper, .cust-job-tuple")
+        if not cards:
+            cards = await page.query_selector_all("div[data-job-id]")
 
         for card in cards[:limit]:
             try:
-                title_el = await card.query_selector(".title, a.title, [class*='jobTitle']")
-                company_el = await card.query_selector(".comp-name, .subTitle a, [class*='companyName']")
-                location_el = await card.query_selector(".loc-wrap .loc, .locWrap .ellipsis, [class*='location']")
-                link_el = await card.query_selector("a.title, a[href*='job-listings'], a[href*='naukri.com']")
+                title_el = await card.query_selector("a.title")
+                company_el = await card.query_selector("a.comp-name, .comp-name")
+                location_el = await card.query_selector("span.loc, .loc-wrap .loc, .locWrap .ellipsis")
 
                 job_title = (await title_el.inner_text()).strip() if title_el else "Unknown"
                 company = (await company_el.inner_text()).strip() if company_el else "Unknown"
                 job_loc = (await location_el.inner_text()).strip() if location_el else ""
-                link = await link_el.get_attribute("href") if link_el else ""
-
-                # If card itself is a link
-                if not link:
-                    link = await card.get_attribute("href") or ""
+                link = await title_el.get_attribute("href") if title_el else ""
 
                 jobs.append({
                     "title": job_title,
