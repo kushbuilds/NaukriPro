@@ -212,7 +212,8 @@ async def apply_to_jobs(jobs):
             except Exception:
                 emit("log", message="Using original resume", level="warning")
 
-            # Fill application
+            # Open new tab for this job
+            page = await context.new_page()
             emit("log", message="Filling application form...", level="info")
             filled = await fill_application_web(page, job, config, ai, resume_text, tailored_path)
 
@@ -252,6 +253,9 @@ async def apply_to_jobs(jobs):
             else:
                 emit("log", message="Could not fill form, skipping", level="error")
                 log_application(job, "failed")
+
+            # Close this tab
+            await page.close()
 
         await browser.close()
 
