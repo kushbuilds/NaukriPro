@@ -228,6 +228,78 @@ JOBS:
         return all_jobs[:10]
 
 
+async def scrape_jobs_only(config):
+    """Scrape job listings without scoring (fast)."""
+    from playwright.async_api import async_playwright
+    import os
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch_persistent_context(
+            user_data_dir=os.path.expanduser("~/.naukripro_chrome_profile"),
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = browser.pages[0] if browser.pages else await browser.new_page()
+
+        all_jobs = []
+        if "linkedin" in config["boards"]:
+            jobs = await scrape_linkedin(page, config["job_titles"], config["location"])
+            all_jobs.extend(jobs)
+        if "naukri" in config["boards"]:
+            jobs = await scrape_naukri(page, config["job_titles"], config["location"])
+            all_jobs.extend(jobs)
+
+        await browser.close()
+
+    # Filter already applied
+    all_jobs = [j for j in all_jobs if not is_already_applied(j.get("url", ""))]
+    return all_jobs
+
+
+@app.route('/api/search_stream')
+def search_stream():
+    """SSE endpoint — streams jobs one by one as they're scored."""
+    config = state["config"]
+    ai = state["ai"]
+    resume_text = state["resume_text"]
+
+    def generate():
+        # Close sign-in browser
+        if "signin_browser" in state and state["signin_browser"]:
+            asyncio.run(state["signin_browser"].close())
+            state["signin_browser"] = None
+
+        yield f"data: {json.dumps({'type':'status','message':'Scraping job listings...'})}\n\n"
+
+        jobs = asyncio.run(scrape_jobs_only(config))
+
+        if not jobs:
+            yield f"data: {json.dumps({'type':'done','auto_apply': config.get('auto_apply', False)})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type':'status','message': f'Found {len(jobs)} listings, scoring...'})}\n\n"
+
+        # Score one by one and stream each result
+        scored_jobs = []
+        for i, job in enumerate(jobs[:15]):
+            try:
+                result = ai.score_job(resume_text, job["title"], job.get("description", job["title"]))
+                job["score"] = result.get("score", 50)
+                job["reason"] = result.get("reason", "")
+            except Exception:
+                job["score"] = 50
+                job["reason"] = ""
+
+            scored_jobs.append(job)
+            yield f"data: {json.dumps({'type':'job','job': job, 'index': i})}\n\n"
+
+        state["jobs"] = scored_jobs
+        yield f"data: {json.dumps({'type':'done','auto_apply': config.get('auto_apply', False)})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
 @app.route('/api/apply')
 def apply_stream():
     """SSE endpoint — streams live application progress."""

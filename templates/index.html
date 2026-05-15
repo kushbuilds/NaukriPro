@@ -162,19 +162,26 @@
       }
     });
 
-    // After sign-in done, search for jobs
+    // After sign-in done, search for jobs — stream them one by one
     document.getElementById('signinDoneBtn').addEventListener('click', async () => {
       setStatus('running', 'Searching for jobs...');
-      searchController = new AbortController();
-      try {
-        const resp = await fetch('/api/search_after_signin', { signal: searchController.signal });
-        const data = await resp.json();
-        if (data.error) { setStatus('idle', data.error); return; }
+      document.getElementById('signinSection').classList.add('hidden');
+      jobsSection.classList.remove('hidden');
+      jobsBody.innerHTML = '';
 
-        const relevant = data.jobs.filter(j => j.score >= 60);
-        jobsBody.innerHTML = '';
-        data.jobs.forEach((job, i) => {
+      const evtSource = new EventSource('/api/search_stream');
+      let jobCount = 0;
+      let relevantCount = 0;
+
+      evtSource.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+
+        if (d.type === 'job') {
+          jobCount++;
+          const job = d.job;
+          const i = d.index;
           const sc = job.score >= 75 ? 'score-high' : job.score >= 50 ? 'score-mid' : 'score-low';
+          if (job.score >= 60) relevantCount++;
           jobsBody.innerHTML += `<tr>
             <td><input type="checkbox" class="job-check" data-index="${i}" ${job.score >= 60 ? 'checked' : ''}></td>
             <td><span class="score-badge ${sc}">${job.score}</span></td>
@@ -182,18 +189,24 @@
             <td>${job.company}</td>
             <td>${job.location}</td>
           </tr>`;
-        });
-        document.getElementById('signinSection').classList.add('hidden');
-        jobsSection.classList.remove('hidden');
-        setStatus('idle', `${data.jobs.length} jobs found — ${relevant.length} relevant (score ≥ 60)`);
-        updateSelectedCount();
-
-        if (data.auto_apply && relevant.length > 0) {
-          applyBtn.click();
+          setStatus('running', `Found ${jobCount} jobs (${relevantCount} relevant)...`);
+          updateSelectedCount();
+        } else if (d.type === 'done') {
+          evtSource.close();
+          setStatus('idle', `${jobCount} jobs found — ${relevantCount} relevant (score ≥ 60)`);
+          updateSelectedCount();
+          if (d.auto_apply && relevantCount > 0) {
+            applyBtn.click();
+          }
+        } else if (d.type === 'status') {
+          setStatus('running', d.message);
         }
-      } catch (err) {
-        setStatus('idle', err.name === 'AbortError' ? 'Stopped' : err.message);
-      }
+      };
+
+      evtSource.onerror = () => {
+        evtSource.close();
+        setStatus('idle', `${jobCount} jobs found`);
+      };
     });
 
     // Stop
