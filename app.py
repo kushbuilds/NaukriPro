@@ -224,6 +224,10 @@ async def apply_to_jobs(jobs):
         context = browser
         page = browser.pages[0] if browser.pages else await browser.new_page()
 
+        # Close the initial blank tab — each job gets its own tab
+        if browser.pages:
+            await browser.pages[0].close()
+
         # Skip login — persistent profile keeps sessions
         emit("log", message="Using saved browser session (no login needed)", level="success")
 
@@ -246,6 +250,7 @@ async def apply_to_jobs(jobs):
 
             # Open new tab for this job
             page = await browser.new_page()
+            await page.bring_to_front()
             emit("log", message="Filling application form...", level="info")
             filled = await fill_application_web(page, job, config, ai, resume_text, tailored_path)
 
