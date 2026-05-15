@@ -42,6 +42,11 @@
               <label><input type="checkbox" name="boards" value="naukri" checked> Naukri.com</label>
             </div>
           </div>
+          <div class="form-group full">
+            <div class="checkbox-group">
+              <label><input type="checkbox" name="auto_apply" checked> ⚡ Auto-apply to all relevant jobs (no manual GO needed)</label>
+            </div>
+          </div>
         </div>
         <button type="submit" class="btn" style="margin-top:1rem; width:100%;">🚀 Find Jobs</button>
       </form>
@@ -131,11 +136,12 @@
         const data = await resp.json();
         if (data.error) { setStatus('idle', data.error); return; }
 
+        const relevant = data.jobs.filter(j => j.score >= 60);
         jobsBody.innerHTML = '';
         data.jobs.forEach((job, i) => {
           const sc = job.score >= 75 ? 'score-high' : job.score >= 50 ? 'score-mid' : 'score-low';
           jobsBody.innerHTML += `<tr>
-            <td><input type="checkbox" class="job-check" data-index="${i}"></td>
+            <td><input type="checkbox" class="job-check" data-index="${i}" ${job.score >= 60 ? 'checked' : ''}></td>
             <td><span class="score-badge ${sc}">${job.score}</span></td>
             <td>${job.title}</td>
             <td>${job.company}</td>
@@ -143,8 +149,13 @@
           </tr>`;
         });
         jobsSection.classList.remove('hidden');
-        setStatus('idle', `${data.jobs.length} jobs found`);
+        setStatus('idle', `${data.jobs.length} jobs found — ${relevant.length} relevant (score ≥ 60)`);
         updateSelectedCount();
+
+        // Auto-apply: automatically start applying to relevant jobs
+        if (data.auto_apply && relevant.length > 0) {
+          applyBtn.click();
+        }
       } catch (err) {
         setStatus('idle', err.name === 'AbortError' ? 'Stopped' : err.message);
       }

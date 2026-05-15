@@ -74,6 +74,8 @@ def search_jobs():
         if not gemini_key:
             return jsonify({"error": "Set GEMINI_API_KEY environment variable"}), 400
 
+        auto_apply = request.form.get('auto_apply') == 'on'
+
         config = {
             "name": "",
             "email": "",
@@ -84,6 +86,7 @@ def search_jobs():
             "boards": boards,
             "resume_path": resume_path,
             "gemini_key": gemini_key,
+            "auto_apply": auto_apply,
         }
 
         state["config"] = config
@@ -108,7 +111,7 @@ def search_jobs():
         jobs = asyncio.run(scrape_and_score(config, state["ai"], state["resume_text"]))
         state["jobs"] = jobs
 
-        return jsonify({"jobs": jobs})
+        return jsonify({"jobs": jobs, "auto_apply": auto_apply})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -117,13 +120,9 @@ def search_jobs():
 async def scrape_and_score(config, ai, resume_text):
     """Scrape jobs and score them."""
     from playwright.async_api import async_playwright
+    import os
 
     async with async_playwright() as p:
-        # Use existing Chrome profile to reuse logged-in sessions
-        import subprocess, os
-        chrome_user_data = os.path.expanduser("~/Library/Application Support/Google/Chrome")
-        
-        # Launch with user's Chrome profile
         browser = await p.chromium.launch_persistent_context(
             user_data_dir=os.path.expanduser("~/.naukripro_chrome_profile"),
             headless=False,
@@ -143,7 +142,7 @@ async def scrape_and_score(config, ai, resume_text):
         # Filter already applied
         all_jobs = [j for j in all_jobs if not is_already_applied(j.get("url", ""))]
 
-        # Score top 10 (faster)
+        # Score top 10 and track relevant count
         scored = []
         for job in all_jobs[:10]:
             desc = await get_job_description(page, job["url"])
@@ -251,14 +250,11 @@ async def apply_to_jobs(jobs):
             filled = await fill_application_web(page, job, config, ai, resume_text, tailored_path)
 
             if filled:
-                # Ask for confirmation
-                summary = f"{job['title']} @ {job['company']} | Fields: {len(filled)}"
-                choice = confirm_submission(summary)
-
-                if choice.upper() == "GO":
-                    # Submit
+                # Auto-apply mode: submit directly. Manual mode: ask GO/SKIP
+                if state["config"].get("auto_apply"):
+                    emit("log", message=f"Auto-submitting: {job['title']} @ {job['company']}", level="info")
                     submit_keywords = ["submit", "submit application", "apply", "send"]
-                    buttons = await page.query_selector_all("button[type='submit'], button")
+                    buttons = await page.query_selector_all("button[type='submit'], button, input[type='submit']")
                     submitted = False
                     for btn in buttons:
                         try:
@@ -270,19 +266,45 @@ async def apply_to_jobs(jobs):
                                 break
                         except Exception:
                             continue
-
                     if submitted:
                         log_application(job, "submitted")
                         applied += 1
                         emit("log", message=f"✅ Submitted: {job['title']} @ {job['company']}", level="success")
                     else:
-                        emit("log", message="Could not find submit button — please submit manually in browser", level="warning")
+                        emit("log", message="Could not find submit button — please submit manually", level="warning")
                         ask_user("Type 'done' after submitting manually")
                         log_application(job, "submitted")
                         applied += 1
                 else:
-                    log_application(job, "skipped")
-                    emit("log", message="Skipped", level="warning")
+                    summary = f"{job['title']} @ {job['company']} | Fields: {len(filled)}"
+                    choice = confirm_submission(summary)
+
+                    if choice.upper() == "GO":
+                        submit_keywords = ["submit", "submit application", "apply", "send"]
+                        buttons = await page.query_selector_all("button[type='submit'], button, input[type='submit']")
+                        submitted = False
+                        for btn in buttons:
+                            try:
+                                text = (await btn.inner_text()).strip().lower()
+                                if any(kw in text for kw in submit_keywords):
+                                    await btn.click()
+                                    await page.wait_for_timeout(3000)
+                                    submitted = True
+                                    break
+                            except Exception:
+                                continue
+                        if submitted:
+                            log_application(job, "submitted")
+                            applied += 1
+                            emit("log", message=f"✅ Submitted: {job['title']} @ {job['company']}", level="success")
+                        else:
+                            emit("log", message="Could not find submit button — please submit manually", level="warning")
+                            ask_user("Type 'done' after submitting manually")
+                            log_application(job, "submitted")
+                            applied += 1
+                    else:
+                        log_application(job, "skipped")
+                        emit("log", message="Skipped", level="warning")
             else:
                 emit("log", message="Could not fill form, skipping", level="error")
                 log_application(job, "failed")
