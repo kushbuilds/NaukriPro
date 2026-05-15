@@ -105,11 +105,18 @@ async def scrape_and_score(config, ai, resume_text):
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        # Use existing Chrome profile to reuse logged-in sessions
+        import subprocess, os
+        chrome_user_data = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+        
+        # Launch with user's Chrome profile
+        browser = await p.chromium.launch_persistent_context(
+            user_data_dir=os.path.expanduser("~/.naukripro_chrome_profile"),
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
         )
-        page = await context.new_page()
+        page = browser.pages[0] if browser.pages else await browser.new_page()
 
         all_jobs = []
         if "linkedin" in config["boards"]:
@@ -136,10 +143,9 @@ async def scrape_and_score(config, ai, resume_text):
                 job["reason"] = ""
             scored.append(job)
 
+        scored.sort(key=lambda x: x["score"], reverse=True)
         await browser.close()
-
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:10]
+        return scored[:10]
 
 
 @app.route('/api/apply')
@@ -195,20 +201,18 @@ async def apply_to_jobs(jobs):
     applied = 0
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        import os
+        browser = await p.chromium.launch_persistent_context(
+            user_data_dir=os.path.expanduser("~/.naukripro_chrome_profile"),
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
         )
-        page = await context.new_page()
+        context = browser
+        page = browser.pages[0] if browser.pages else await browser.new_page()
 
-        # Login if needed
-        if "naukri" in config["boards"]:
-            emit("log", message="Logging into Naukri.com...", level="info")
-            await ensure_naukri_login(page, context)
-        if "linkedin" in config["boards"]:
-            emit("log", message="Logging into LinkedIn...", level="info")
-            await ensure_linkedin_login(page, context)
+        # Skip login — persistent profile keeps sessions
+        emit("log", message="Using saved browser session (no login needed)", level="success")
 
         for i, job in enumerate(jobs, 1):
             if state["stop_flag"]:
@@ -228,7 +232,7 @@ async def apply_to_jobs(jobs):
                 emit("log", message="Using original resume", level="warning")
 
             # Open new tab for this job
-            page = await context.new_page()
+            page = await browser.new_page()
             emit("log", message="Filling application form...", level="info")
             filled = await fill_application_web(page, job, config, ai, resume_text, tailored_path)
 
